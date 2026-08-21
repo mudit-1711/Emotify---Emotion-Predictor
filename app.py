@@ -14,11 +14,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── Download NLTK data silently ──────────────────────────────────────────────
+# ─── NLTK ─────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def download_nltk():
     nltk.download("stopwords", quiet=True)
-    nltk.download("punkt", quiet=True)
 
 download_nltk()
 
@@ -34,510 +33,285 @@ def load_models():
     return model, tfidf, emotions_map
 
 model, tfidf, emotions_map = load_models()
-
-# Reverse map: int → emotion name
 idx_to_emotion = {v: k for k, v in emotions_map.items()}
 
-# ─── Emotion Metadata ─────────────────────────────────────────────────────────
+# ─── Emotion Config ───────────────────────────────────────────────────────────
 EMOTION_META = {
-    "joy":      {"emoji": "😄", "color": "#F9C74F", "bg": "#fffbe6", "label": "Joy"},
-    "sadness":  {"emoji": "😢", "color": "#4F8EF9", "bg": "#e8f0fe", "label": "Sadness"},
-    "anger":    {"emoji": "😡", "color": "#F94F4F", "bg": "#fdecea", "label": "Anger"},
-    "fear":     {"emoji": "😨", "color": "#A855F7", "bg": "#f5f0ff", "label": "Fear"},
-    "love":     {"emoji": "❤️",  "color": "#F97316", "bg": "#fff4ed", "label": "Love"},
-    "surprise": {"emoji": "😲", "color": "#10B981", "bg": "#ecfdf5", "label": "Surprise"},
+    "joy":      {"emoji": "😄", "color": "#F59E0B", "card_bg": "linear-gradient(145deg,#3d2e00,#5a4500)", "bar": "#F59E0B", "label": "JOY"},
+    "sadness":  {"emoji": "😢", "color": "#4F8EF9", "card_bg": "linear-gradient(145deg,#0d1f3c,#1a3a6e)", "bar": "#F97316", "label": "SADNESS"},
+    "anger":    {"emoji": "😡", "color": "#EF4444", "card_bg": "linear-gradient(145deg,#3c0d0d,#6e1a1a)", "bar": "#EF4444", "label": "ANGER"},
+    "fear":     {"emoji": "😨", "color": "#A855F7", "card_bg": "linear-gradient(145deg,#1e0d3c,#361a6e)", "bar": "#A855F7", "label": "FEAR"},
+    "love":     {"emoji": "❤️",  "color": "#EC4899", "card_bg": "linear-gradient(145deg,#3c0d20,#6e1a3c)", "bar": "#EC4899", "label": "LOVE"},
+    "surprise": {"emoji": "😲", "color": "#10B981", "card_bg": "linear-gradient(145deg,#0d3c22,#1a6e3c)", "bar": "#10B981", "label": "SURPRISE"},
 }
 
-# ─── Preprocessing ────────────────────────────────────────────────────────────
-def preprocess(text: str) -> str:
+QUOTES = {
+    "sadness":  '"Heavy hearts, like heavy clouds in the sky, are best relieved by the letting of a little water." — Antoine de Saint-Exupéry',
+    "joy":      '"The most important thing is to enjoy your life — to be happy — it\'s all that matters." — Audrey Hepburn',
+    "anger":    '"Speak when you are angry and you will make the best speech you will ever regret." — Ambrose Bierce',
+    "fear":     '"Do one thing every day that scares you." — Eleanor Roosevelt',
+    "love":     '"The best thing to hold onto in life is each other." — Audrey Hepburn',
+    "surprise": '"The appearance of things changes according to the emotions." — Kahlil Gibran',
+}
+
+# ─── NLP Pipeline ─────────────────────────────────────────────────────────────
+def preprocess(text):
     text = text.lower()
     text = re.sub(r"[%s]" % re.escape(string.punctuation), " ", text)
     text = re.sub(r"\d+", " ", text)
     text = re.sub(r"[^\x00-\x7F]+", " ", text)
-    tokens = text.split()
     stop_words = set(stopwords.words("english"))
-    tokens = [t for t in tokens if t not in stop_words and len(t) > 1]
+    tokens = [t for t in text.split() if t not in stop_words and len(t) > 1]
     return " ".join(tokens)
 
-# ─── Prediction ───────────────────────────────────────────────────────────────
-def predict(text: str):
+def predict(text):
     cleaned = preprocess(text)
     vec = tfidf.transform([cleaned])
     pred_idx = model.predict(vec)[0]
     proba = model.predict_proba(vec)[0]
-    emotion = idx_to_emotion[pred_idx]
-    return emotion, proba, cleaned
+    return idx_to_emotion[pred_idx], proba, cleaned
 
-# ─── Keyword Extraction ───────────────────────────────────────────────────────
-def get_keywords(cleaned: str, top_n: int = 10):
-    vocab = tfidf.vocabulary_
+def get_keywords(cleaned, top_n=5):
     feature_names = tfidf.get_feature_names_out()
     vec = tfidf.transform([cleaned])
-    coef = model.coef_  # shape (n_classes, n_features)
     pred_idx = model.predict(vec)[0]
-    scores = coef[pred_idx] * vec.toarray()[0]
-    top_indices = np.argsort(scores)[::-1][:top_n]
-    keywords = [feature_names[i] for i in top_indices if scores[i] > 0]
-    return keywords
+    scores = model.coef_[pred_idx] * vec.toarray()[0]
+    top_idx = np.argsort(scores)[::-1][:top_n]
+    return [feature_names[i] for i in top_idx if scores[i] > 0]
 
-# ─── Global CSS ───────────────────────────────────────────────────────────────
+# ─── CSS ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Poppins:wght@700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@800;900&display=swap');
 
-/* ── Reset & Base ── */
-html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-    height: 100vh !important;
-    overflow: hidden !important;
-    background: #0f0f13 !important;
-}
-[data-testid="stAppViewContainer"] > section > div {
-    height: 100vh;
-    overflow: hidden;
-}
-.main .block-container {
-    padding: 0 !important;
-    max-width: 100% !important;
-    height: 100vh;
-    overflow: hidden;
-}
-* { font-family: 'Inter', sans-serif; box-sizing: border-box; }
-.stButton button { display: none; }
-header[data-testid="stHeader"], [data-testid="stToolbar"],
-footer, #MainMenu { display: none !important; }
+* { font-family: 'Inter', sans-serif !important; box-sizing: border-box; }
+html, body, [data-testid="stAppViewContainer"] { background: #0d0d0d !important; }
+.main .block-container { padding: 28px 32px 16px 32px !important; max-width: 100% !important; }
+header[data-testid="stHeader"], [data-testid="stToolbar"], footer, #MainMenu { display: none !important; }
 
-/* ── App Shell ── */
-.app-shell {
-    display: grid;
-    grid-template-columns: 340px 1fr;
-    grid-template-rows: 64px 1fr;
-    height: 100vh;
-    width: 100%;
-    background: #0f0f13;
-    overflow: hidden;
+.emo-title {
+    font-family: 'Poppins', sans-serif !important;
+    font-size: 52px; font-weight: 900;
+    background: linear-gradient(135deg, #ff2d78 0%, #ff6b35 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; line-height: 1; margin-bottom: 6px;
 }
+.emo-tagline { font-size: 13px; color: rgba(255,255,255,0.45); margin-bottom: 6px; }
+.emo-model-badge { font-size: 12px; color: rgba(255,255,255,0.3); }
+.input-label { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.55); margin-bottom: 8px; margin-top: 16px; }
 
-/* ── Top Bar ── */
-.topbar {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    padding: 0 28px;
-    background: rgba(255,255,255,0.03);
-    border-bottom: 1px solid rgba(255,255,255,0.07);
-    gap: 12px;
-}
-.topbar-logo {
-    font-family: 'Poppins', sans-serif;
-    font-size: 22px;
-    font-weight: 800;
-    background: linear-gradient(135deg, #f9c74f 0%, #f97316 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.5px;
-}
-.topbar-tagline {
-    font-size: 13px;
-    color: rgba(255,255,255,0.4);
-    font-weight: 400;
-    margin-left: 4px;
-}
-.topbar-badge {
-    margin-left: auto;
-    background: rgba(249,199,79,0.1);
-    border: 1px solid rgba(249,199,79,0.25);
-    color: #f9c74f;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 20px;
-    letter-spacing: 0.5px;
-}
-
-/* ── Left Panel ── */
-.left-panel {
-    background: rgba(255,255,255,0.025);
-    border-right: 1px solid rgba(255,255,255,0.07);
-    display: flex;
-    flex-direction: column;
-    padding: 24px 20px;
-    gap: 16px;
-    overflow: hidden;
-}
-.panel-label {
-    font-size: 10px;
-    font-weight: 700;
-    color: rgba(255,255,255,0.3);
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    margin-bottom: 4px;
-}
-.text-area-wrapper {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
 textarea {
-    width: 100% !important;
-    background: rgba(255,255,255,0.04) !important;
+    background: #1a1a1a !important;
     border: 1px solid rgba(255,255,255,0.1) !important;
-    border-radius: 12px !important;
-    color: rgba(255,255,255,0.85) !important;
+    border-radius: 10px !important;
+    color: rgba(255,255,255,0.8) !important;
     font-size: 14px !important;
-    font-family: 'Inter', sans-serif !important;
-    resize: none !important;
-    padding: 14px !important;
-    transition: border-color 0.2s;
-    flex: 1;
+    resize: none !important; padding: 12px !important;
 }
 textarea:focus {
-    border-color: rgba(249,199,79,0.4) !important;
+    border-color: rgba(255,45,120,0.35) !important;
+    box-shadow: 0 0 0 3px rgba(255,45,120,0.08) !important;
     outline: none !important;
-    box-shadow: 0 0 0 3px rgba(249,199,79,0.08) !important;
 }
 textarea::placeholder { color: rgba(255,255,255,0.2) !important; }
+[data-testid="stTextArea"] label { display: none !important; }
 
-.analyze-btn {
-    width: 100%;
-    padding: 14px;
-    border-radius: 12px;
-    border: none;
-    background: linear-gradient(135deg, #f9c74f 0%, #f97316 100%);
-    color: #0f0f13;
-    font-size: 15px;
-    font-weight: 700;
-    font-family: 'Inter', sans-serif;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.15s;
-    letter-spacing: 0.3px;
+[data-testid="stButton"] > button {
+    width: 100% !important; padding: 12px 20px !important;
+    border-radius: 10px !important; background: #1a1a1a !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    color: rgba(255,255,255,0.75) !important;
+    font-size: 14px !important; font-weight: 600 !important;
+    cursor: pointer !important; transition: all 0.2s !important;
+    box-shadow: none !important;
 }
-.analyze-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-.analyze-btn:active { transform: translateY(0); }
+[data-testid="stButton"] > button:hover {
+    background: #222 !important;
+    border-color: rgba(255,45,120,0.4) !important;
+    color: #fff !important;
+    box-shadow: 0 0 12px rgba(255,45,120,0.15) !important;
+}
+[data-testid="stButton"] > button:focus { box-shadow: none !important; outline: none !important; }
 
-/* ── Right Panel ── */
-.right-panel {
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    gap: 0;
-    overflow: hidden;
-    padding: 20px 24px;
-    background: #0f0f13;
+.empty-card {
+    background: #141414; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 50px 30px; text-align: center;
+    color: rgba(255,255,255,0.2); min-height: 260px;
 }
+.e-icon { font-size: 44px; margin-bottom: 12px; filter: grayscale(1) opacity(0.35); }
+.e-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.e-sub { font-size: 12px; line-height: 1.7; max-width: 220px; }
 
-/* ── Hero Result ── */
-.hero-result {
-    border-radius: 16px;
-    padding: 22px 24px;
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    margin-bottom: 16px;
-    transition: all 0.4s ease;
-}
-.hero-emoji {
-    font-size: 56px;
-    line-height: 1;
-    filter: drop-shadow(0 4px 16px rgba(0,0,0,0.3));
-}
-.hero-text { flex: 1; }
-.hero-label {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    opacity: 0.6;
-    margin-bottom: 4px;
-}
-.hero-emotion {
-    font-family: 'Poppins', sans-serif;
-    font-size: 36px;
-    font-weight: 800;
-    line-height: 1.1;
-    letter-spacing: -1px;
-}
-.hero-confidence {
-    font-size: 14px;
-    font-weight: 500;
-    opacity: 0.65;
-    margin-top: 4px;
-}
-
-/* ── Probability Grid ── */
-.prob-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 10px;
-    overflow: hidden;
-    margin-bottom: 16px;
-}
-.prob-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 12px;
-    padding: 12px 14px;
-    transition: all 0.2s;
-}
-.prob-card.active {
-    border-color: rgba(255,255,255,0.2);
-    background: rgba(255,255,255,0.06);
-}
-.prob-card-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-}
-.prob-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: rgba(255,255,255,0.75);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.prob-pct {
-    font-size: 13px;
-    font-weight: 700;
-    color: rgba(255,255,255,0.55);
-}
-.prob-bar-bg {
-    height: 4px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 99px;
-    overflow: hidden;
-}
-.prob-bar-fill {
-    height: 100%;
-    border-radius: 99px;
-    transition: width 0.5s ease;
-}
-
-/* ── Keywords ── */
-.keywords-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-}
-.kw-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.3);
-    margin-right: 4px;
-}
-.kw-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 500;
-    background: rgba(255,255,255,0.06);
-    color: rgba(255,255,255,0.6);
-    border: 1px solid rgba(255,255,255,0.08);
-    transition: background 0.2s;
-}
-
-/* ── Empty State ── */
-.empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    gap: 12px;
-    color: rgba(255,255,255,0.2);
-    text-align: center;
-    padding: 40px;
-}
-.empty-icon { font-size: 52px; margin-bottom: 8px; filter: grayscale(1) opacity(0.4); }
-.empty-title { font-size: 18px; font-weight: 600; }
-.empty-sub { font-size: 13px; line-height: 1.6; max-width: 280px; }
-
-/* ── Accuracy pill ── */
-.acc-pill {
-    background: rgba(16,185,129,0.1);
-    border: 1px solid rgba(16,185,129,0.2);
-    color: #10b981;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 20px;
-    letter-spacing: 0.5px;
-    margin-left: 8px;
-}
-
-/* ── Streamlit widget overrides ── */
-[data-testid="stTextArea"] {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-[data-testid="stTextArea"] > div {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-[data-testid="stTextArea"] > div > div {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-[data-testid="stTextArea"] textarea {
-    flex: 1;
-    min-height: unset !important;
-    height: 100% !important;
-}
-[data-testid="stVerticalBlock"] {
-    gap: 0 !important;
-}
+[data-testid="column"] { padding: 0 8px !important; }
+.stMarkdown { margin-bottom: 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ─── Session State ─────────────────────────────────────────────────────────────
 if "result" not in st.session_state:
     st.session_state.result = None
-if "input_text" not in st.session_state:
-    st.session_state.input_text = ""
 
-# ─── App Shell: Top Bar ────────────────────────────────────────────────────────
+# ─── HEADER ───────────────────────────────────────────────────────────────────
 st.markdown("""
-<div class="topbar">
-  <span class="topbar-logo">🎭 Emotify</span>
-  <span class="topbar-tagline">— Emotion Intelligence Engine</span>
-  <span class="topbar-badge">NLP · Logistic Regression</span>
-  <span class="acc-pill">✦ 86.15% Accuracy</span>
-</div>
+<div class="emo-title">Emotify</div>
+<div class="emo-tagline">Discover the underlying emotions in your writing using machine learning</div>
+<div class="emo-model-badge">👤 Active Model: Logistic Regression (Accuracy: 86.2%)</div>
 """, unsafe_allow_html=True)
+st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
 
-# ─── Two-Column Layout ─────────────────────────────────────────────────────────
-left_col, right_col = st.columns([340, 1000], gap="small")
+# ─── THREE COLUMN LAYOUT ──────────────────────────────────────────────────────
+col_input, col_result, col_probs = st.columns([1.1, 1.3, 1.1], gap="medium")
 
-# ── LEFT PANEL ──
-with left_col:
-    st.markdown('<p class="panel-label">Input Text</p>', unsafe_allow_html=True)
+# ══════════════════════════ LEFT: INPUT ═══════════════════════════════════════
+with col_input:
+    st.markdown('<div class="input-label">Express your thoughts</div>', unsafe_allow_html=True)
 
     user_input = st.text_area(
-        label="",
-        placeholder="Type or paste any text here…\n\nExamples:\n• "I'm so happy today!"\n• "This makes me really angry"\n• "I feel so alone and sad"",
-        height=320,
-        key="text_input",
+        label="text",
+        placeholder="Type what's on your mind…",
+        height=200,
+        key="user_text",
         label_visibility="collapsed",
     )
 
-    analyze_clicked = st.button("⚡ Analyze Emotion", use_container_width=True)
+    analyze_clicked = st.button("✨  Analyze Emotion", use_container_width=True)
 
-    st.markdown("""
-    <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px; margin-top:4px;">
-      <p class="panel-label">Detectable Emotions</p>
-      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">
-        <span style="font-size:13px;">😄 Joy</span>
-        <span style="font-size:13px;">😢 Sadness</span>
-        <span style="font-size:13px;">😡 Anger</span>
-        <span style="font-size:13px;">😨 Fear</span>
-        <span style="font-size:13px;">❤️ Love</span>
-        <span style="font-size:13px;">😲 Surprise</span>
-      </div>
-      <p style="font-size:11px; color:rgba(255,255,255,0.2); margin-top:14px; line-height:1.6;">
-        Powered by TF-IDF vectorization + Logistic Regression trained on 16,000+ labeled samples.
-      </p>
-    </div>
-    """, unsafe_allow_html=True)
+    if analyze_clicked:
+        if user_input.strip():
+            emotion, proba, cleaned = predict(user_input)
+            keywords = get_keywords(cleaned)
+            st.session_state.result = {
+                "emotion": emotion,
+                "proba": proba,
+                "keywords": keywords,
+            }
+        else:
+            st.session_state.result = "empty"
 
-# ── RIGHT PANEL ──
-with right_col:
-    if analyze_clicked and user_input.strip():
-        # Run prediction
-        emotion, proba, cleaned = predict(user_input)
-        keywords = get_keywords(cleaned)
-        st.session_state.result = {
-            "emotion": emotion,
-            "proba": proba,
-            "keywords": keywords,
-        }
-    elif analyze_clicked and not user_input.strip():
-        st.session_state.result = "empty"
-
+# ══════════════════════════ MIDDLE: RESULT ════════════════════════════════════
+with col_result:
     res = st.session_state.result
 
-    if res is None:
-        # Empty state
-        st.markdown("""
-        <div class="empty-state">
-          <div class="empty-icon">🎭</div>
-          <div class="empty-title">No analysis yet</div>
-          <div class="empty-sub">Enter any text on the left panel and click <strong>Analyze Emotion</strong> to get started.</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    elif res == "empty":
-        st.markdown("""
-        <div class="empty-state">
-          <div class="empty-icon">✏️</div>
-          <div class="empty-title">Nothing to analyze</div>
-          <div class="empty-sub">Please type something in the text box before analyzing.</div>
-        </div>
-        """, unsafe_allow_html=True)
-
+    if res is None or res == "empty":
+        msg = "Enter text and click Analyze Emotion to see results." if res == "empty" else "Your emotion analysis will appear here."
+        st.markdown(
+            '<div class="empty-card">'
+            '<div class="e-icon">🎭</div>'
+            '<div class="e-title">Analysis Result</div>'
+            '<div class="e-sub">' + msg + '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     else:
-        emotion = res["emotion"]
-        proba   = res["proba"]
+        emotion  = res["emotion"]
+        proba    = res["proba"]
         keywords = res["keywords"]
-        meta    = EMOTION_META.get(emotion, EMOTION_META["joy"])
-        confidence = proba[emotions_map[emotion]] * 100
+        meta     = EMOTION_META.get(emotion, EMOTION_META["joy"])
+        quote    = QUOTES.get(emotion, "")
+        card_bg  = meta["card_bg"]
+        emoji    = meta["emoji"]
+        label    = meta["label"]
 
-        # ── Hero Result Card ──
-        st.markdown(f"""
-        <div class="hero-result" style="background: linear-gradient(135deg, {meta['color']}18 0%, {meta['color']}06 100%);
-             border: 1px solid {meta['color']}35;">
-          <div class="hero-emoji">{meta['emoji']}</div>
-          <div class="hero-text">
-            <div class="hero-label" style="color:{meta['color']};">Detected Emotion</div>
-            <div class="hero-emotion" style="color:{meta['color']};">{meta['label']}</div>
-            <div class="hero-confidence" style="color:{meta['color']};">
-              Confidence: {confidence:.1f}%
-            </div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ── Probability Breakdown Grid ──
-        st.markdown('<p class="panel-label" style="margin-bottom:8px;">Probability Breakdown</p>', unsafe_allow_html=True)
-
-        prob_cards_html = '<div class="prob-grid">'
-        for emo_name, emo_idx in sorted(emotions_map.items(), key=lambda x: -proba[x[1]]):
-            m = EMOTION_META.get(emo_name, {"emoji": "🔵", "color": "#888", "label": emo_name.title()})
-            pct = proba[emo_idx] * 100
-            is_active = "active" if emo_name == emotion else ""
-            bar_width = f"{pct:.1f}%"
-            prob_cards_html += f"""
-            <div class="prob-card {is_active}">
-              <div class="prob-card-top">
-                <span class="prob-name">{m['emoji']} {m['label']}</span>
-                <span class="prob-pct" style="color:{m['color']};">{pct:.1f}%</span>
-              </div>
-              <div class="prob-bar-bg">
-                <div class="prob-bar-fill" style="width:{bar_width}; background:{m['color']};"></div>
-              </div>
-            </div>"""
-        prob_cards_html += "</div>"
-        st.markdown(prob_cards_html, unsafe_allow_html=True)
-
-        # ── Keywords ──
+        # Build keyword chips as plain string (no f-string nesting)
         if keywords:
-            chips_html = "".join(
-                f'<span class="kw-chip" style="border-color:{meta["color"]}30; color:{meta["color"]}99;">{kw}</span>'
-                for kw in keywords
+            kw_chips = ""
+            for kw in keywords:
+                kw_chips += (
+                    '<span style="display:inline-flex;align-items:center;gap:4px;'
+                    'padding:4px 10px;border-radius:20px;'
+                    'background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.2);'
+                    'color:rgba(245,158,11,0.9);font-size:12px;font-weight:500;margin:2px;">🔑 '
+                    + kw + '</span>'
+                )
+        else:
+            kw_chips = '<span style="color:rgba(255,255,255,0.2);font-size:12px;">No key signals detected</span>'
+
+        # Render card header + emotion card
+        st.markdown(
+            '<div style="background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:14px;overflow:hidden;">'
+            '<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:0.8px;'
+            'padding:14px 18px 10px 18px;border-bottom:1px solid rgba(255,255,255,0.06);">Analysis Result</div>',
+            unsafe_allow_html=True,
+        )
+        # Emotion card with gradient background
+        st.markdown(
+            '<div style="background:' + card_bg + ';border-radius:12px;padding:28px 20px;'
+            'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+            'margin:14px;text-align:center;min-height:160px;">'
+            '<div style="font-size:52px;margin-bottom:12px;line-height:1;">' + emoji + '</div>'
+            '<div style="font-family:Poppins,sans-serif;font-size:26px;font-weight:900;'
+            'color:#ffffff;letter-spacing:2px;">' + label + '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # Quote
+        st.markdown(
+            '<div style="font-size:12px;font-style:italic;color:rgba(255,255,255,0.4);'
+            'text-align:center;line-height:1.6;padding:0 14px 14px 14px;">' + quote + '</div>',
+            unsafe_allow_html=True,
+        )
+        # Keywords section
+        st.markdown(
+            '<div style="padding:10px 14px 14px 14px;border-top:1px solid rgba(255,255,255,0.06);">'
+            '<div style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.35);margin-bottom:8px;">Key Words:</div>'
+            '<div style="display:flex;flex-wrap:wrap;gap:7px;">' + kw_chips + '</div>'
+            '</div>'
+            '</div>',   # closes the outer card wrapper div
+            unsafe_allow_html=True,
+        )
+
+# ══════════════════════════ RIGHT: PROBABILITIES ══════════════════════════════
+with col_probs:
+    res = st.session_state.result
+
+    if res is None or res == "empty":
+        st.markdown(
+            '<div class="empty-card">'
+            '<div class="e-icon">📊</div>'
+            '<div class="e-title">Emotion Probabilities</div>'
+            '<div class="e-sub">Probability breakdown will appear here after analysis.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        proba = res["proba"]
+
+        # Card header (opened div — no f-string)
+        st.markdown(
+            '<div style="background:#141414;border:1px solid rgba(255,255,255,0.08);'
+            'border-radius:14px;overflow:hidden;">'
+            '<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);'
+            'letter-spacing:0.8px;padding:14px 18px 10px 18px;'
+            'border-bottom:1px solid rgba(255,255,255,0.06);">Emotion Probabilities</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Each row is a SEPARATE st.markdown call — no HTML string embedding
+        sorted_emotions = sorted(emotions_map.items(), key=lambda x: -proba[x[1]])
+        last_idx = len(sorted_emotions) - 1
+        for i, (emo_name, emo_idx) in enumerate(sorted_emotions):
+            m     = EMOTION_META.get(emo_name, {"emoji": "🔵", "bar": "#888", "label": emo_name.title()})
+            pct   = proba[emo_idx] * 100
+            emoji = m["emoji"]
+            lbl   = m["label"].capitalize()
+            bar   = m["bar"]
+            bd    = "none" if i == last_idx else "1px solid rgba(255,255,255,0.04)"
+            w     = "{:.1f}".format(pct)
+
+            st.markdown(
+                '<div style="display:flex;align-items:center;gap:10px;padding:9px 18px;border-bottom:' + bd + ';">'
+                '<span style="font-size:15px;width:22px;text-align:center;">' + emoji + '</span>'
+                '<span style="font-size:13px;color:rgba(255,255,255,0.65);width:70px;">' + lbl + '</span>'
+                '<div style="flex:1;height:6px;background:rgba(255,255,255,0.06);border-radius:99px;overflow:hidden;">'
+                '<div style="width:' + w + '%;height:100%;background:' + bar + ';border-radius:99px;"></div>'
+                '</div>'
+                '<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.5);width:38px;text-align:right;">'
+                + w + '%</span>'
+                '</div>',
+                unsafe_allow_html=True,
             )
-            st.markdown(f"""
-            <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:14px; margin-top:4px;">
-              <div class="keywords-row">
-                <span class="kw-label">Key Signals</span>
-                {chips_html}
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+
+        # Close card wrapper div
+        st.markdown("</div>", unsafe_allow_html=True)
